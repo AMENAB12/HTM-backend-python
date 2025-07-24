@@ -27,6 +27,7 @@ async def login(credentials: dict):
         token = auth_manager.create_access_token({"sub": username})
         return {
             "access_token": token, 
+            "username": username,
             "token_type": "bearer",
             "message": "Login successful"
         }
