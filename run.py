@@ -66,12 +66,12 @@ def main():
         "access_log": True,
     }
     
-    print(f"🚀 Starting {settings.app_name} v{settings.app_version}")
-    print(f"🌍 Environment: {args.env}")
-    print(f"📡 Server: http://{args.host}:{args.port}")
-    print(f"📚 API Docs: http://{args.host}:{args.port}/docs")
-    print(f"🔧 Debug mode: {args.debug}")
-    print(f"🔄 Auto-reload: {uvicorn_config['reload']}")
+    print(f"Starting {settings.app_name} v{settings.app_version}")
+    print(f"Environment: {args.env}")
+    print(f"Server: http://{args.host}:{args.port}")
+    print(f"API Docs: http://{args.host}:{args.port}/docs")
+    print(f"Debug mode: {args.debug}")
+    print(f"Auto-reload: {uvicorn_config['reload']}")
     
     # Start the server
     uvicorn.run(**uvicorn_config)
