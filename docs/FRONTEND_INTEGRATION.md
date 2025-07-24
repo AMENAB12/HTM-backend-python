@@ -360,6 +360,48 @@ const response = await fetch(
 }
 ```
 
+#### `GET /files/{file_id}/download`
+
+**Purpose:** Generate secure download URL for Parquet/CSV files
+
+**Parameters:**
+
+- `format` (optional): File format - "csv" or "parquet" (default: "parquet")
+- `expiration_hours` (optional): URL expiration time in hours 1-24 (default: 1)
+
+**Example Request:**
+
+```javascript
+const response = await fetch(
+  `http://localhost:8000/files/1/download?format=parquet&expiration_hours=6`,
+  {
+    headers: { Authorization: `Bearer ${token}` },
+  }
+);
+```
+
+**Success Response (200):**
+
+```json
+{
+  "download_url": "https://your-account-id.r2.cloudflarestorage.com/csv-converter-storage/parquet/data.parquet?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=...",
+  "file_info": {
+    "id": 1,
+    "filename": "data.csv",
+    "format": "parquet",
+    "size_bytes": 8230,
+    "size_mb": 0.008,
+    "rows": 150
+  },
+  "url_info": {
+    "expires_in_hours": 6,
+    "expires_in_seconds": 21600,
+    "storage_type": "cloud",
+    "generated_at": "2024-01-15T15:30:00"
+  }
+}
+```
+
 #### `DELETE /files/{file_id}`
 
 **Purpose:** Delete file and its metadata
@@ -1400,6 +1442,24 @@ class CSVConverterAPI {
     return this.request(`/files/${fileId}/preview?rows=${rows}`);
   }
 
+  async getDownloadUrl(
+    fileId: number,
+    options: {
+      format?: "csv" | "parquet";
+      expiration_hours?: number;
+    } = {}
+  ): Promise<any> {
+    const params = new URLSearchParams();
+    if (options.format) params.set("format", options.format);
+    if (options.expiration_hours)
+      params.set("expiration_hours", options.expiration_hours.toString());
+
+    const url = params.toString()
+      ? `/files/${fileId}/download?${params}`
+      : `/files/${fileId}/download`;
+    return this.request(url);
+  }
+
   async deleteFile(fileId: number): Promise<void> {
     await this.request(`/files/${fileId}`, { method: "DELETE" });
   }
@@ -1484,6 +1544,15 @@ const fileData = await api.getFileData(1, {
 
 // Get file statistics
 const stats = await api.getFileStatistics(1);
+
+// Generate download URL for Parquet file
+const downloadInfo = await api.getDownloadUrl(1, {
+  format: "parquet",
+  expiration_hours: 6,
+});
+
+// Use the download URL
+window.open(downloadInfo.download_url, "_blank");
 ```
 
 ---

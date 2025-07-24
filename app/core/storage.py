@@ -168,6 +168,23 @@ class StorageService:
         else:
             return os.path.getsize(file_path) if os.path.exists(file_path) else 0
     
+    def generate_download_url(self, file_path: str, expiration: int = 3600) -> str:
+        """
+        Generate a download URL for a file (presigned URL for cloud, direct path for local)
+        
+        Args:
+            file_path: Path to the file or S3 key
+            expiration: URL expiration time in seconds (default: 1 hour)
+            
+        Returns:
+            Download URL
+        """
+        if self.settings.should_use_cloud_storage and HAS_BOTO3:
+            return self._generate_presigned_url(file_path, expiration)
+        else:
+            # For local storage, return the file path (will be served by FastAPI)
+            return f"/files/download/local/{file_path}"
+    
     # Local storage methods
     async def _save_to_local(self, file_content: bytes, filename: str, file_type: str) -> str:
         """Save file to local storage"""
@@ -306,6 +323,25 @@ class StorageService:
         except ClientError:
             return 0
     
+    def _generate_presigned_url(self, key: str, expiration: int = 3600) -> str:
+        """Generate a presigned URL for downloading from R2/S3"""
+        try:
+            url = self.s3_client.generate_presigned_url(
+                'get_object',
+                Params={
+                    'Bucket': self.settings.r2_bucket_name,
+                    'Key': key
+                },
+                ExpiresIn=expiration
+            )
+            if self._debug_mode:
+                logger.info(f"📤 Generated download URL for: {key} (expires in {expiration}s)")
+            return url
+        except Exception as e:
+            logger.error(f"❌ Failed to generate presigned URL for {key}: {str(e)}")
+            # Fallback to direct S3 URL (may not work without auth)
+            return f"{self.settings.r2_endpoint_url}/{self.settings.r2_bucket_name}/{key}"
+    
     def get_file_url(self, file_path: str) -> str:
         """
         Get a URL for accessing the file
@@ -331,4 +367,5 @@ class StorageService:
 
 
 # Global storage service instance
-storage_service = StorageService() 
+storage_service = StorageService()
+storage = storage_service  # Alias for backwards compatibility 

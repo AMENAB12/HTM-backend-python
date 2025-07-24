@@ -1,4 +1,5 @@
 from fastapi import APIRouter, UploadFile, File, Depends, HTTPException, status, Query
+from fastapi.responses import FileResponse
 import os
 import pandas as pd
 import numpy as np
@@ -668,6 +669,162 @@ async def get_file_preview(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error generating preview: {str(e)}"
         )
+
+@router.get("/files/{file_id}/download")
+async def get_download_url(
+    file_id: int,
+    format: Optional[str] = Query("parquet", description="File format to download: 'csv' or 'parquet'"),
+    expiration_hours: Optional[int] = Query(1, description="URL expiration time in hours (1-24)"),
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Generate a secure download URL for a processed file
+    
+    - Returns presigned URLs for cloud storage (R2)
+    - Returns direct download endpoint for local storage
+    - Supports both CSV and Parquet formats
+    - Configurable expiration time (1-24 hours)
+    """
+    file_metadata = db_manager.get_metadata_by_id(file_id)
+    if not file_metadata:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="File not found"
+        )
+    
+    # Validate expiration time
+    if expiration_hours < 1 or expiration_hours > 24:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Expiration time must be between 1 and 24 hours"
+        )
+    
+    expiration_seconds = expiration_hours * 3600
+    
+    try:
+        if format.lower() == "csv":
+            # Download original CSV file
+            if settings.should_use_cloud_storage:
+                file_path = f"csv/{file_metadata.filename}"
+                if not storage.file_exists(file_path):
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail="Original CSV file not found in cloud storage"
+                    )
+            else:
+                file_path = f"uploads/{file_metadata.filename}"
+                if not os.path.exists(file_path):
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail="Original CSV file not found in local storage"
+                    )
+            
+            download_url = storage.generate_download_url(file_path, expiration_seconds)
+            file_size = storage.get_file_size(file_path)
+            
+        else:  # parquet format
+            if file_metadata.status != "Done":
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"File is not ready for download. Status: {file_metadata.status}"
+                )
+            
+            if not file_metadata.parquet_path:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Parquet file not found"
+                )
+            
+            # Check if file exists in storage
+            parquet_found = False
+            
+            # Try R2 location first
+            if settings.should_use_cloud_storage and file_metadata.parquet_path.startswith("parquet/"):
+                if storage.file_exists(file_metadata.parquet_path):
+                    parquet_found = True
+            
+            # Try local location if not found in R2
+            if not parquet_found and os.path.exists(file_metadata.parquet_path):
+                parquet_found = True
+            
+            if not parquet_found:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Parquet file not found in any storage location"
+                )
+            
+            download_url = storage.generate_download_url(file_metadata.parquet_path, expiration_seconds)
+            file_size = storage.get_file_size(file_metadata.parquet_path)
+        
+        return {
+            "download_url": download_url,
+            "file_info": {
+                "id": file_id,
+                "filename": file_metadata.filename,
+                "format": format.lower(),
+                "size_bytes": file_size,
+                "size_mb": round(file_size / (1024 * 1024), 2) if file_size > 0 else 0,
+                "rows": file_metadata.row_count
+            },
+            "url_info": {
+                "expires_in_hours": expiration_hours,
+                "expires_in_seconds": expiration_seconds,
+                "storage_type": "cloud" if settings.should_use_cloud_storage else "local",
+                "generated_at": datetime.now().isoformat()
+            }
+        }
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error generating download URL: {str(e)}"
+        )
+
+@router.get("/files/download/local/{file_path:path}")
+async def download_local_file(
+    file_path: str,
+    current_user: dict = Depends(get_current_user)
+):
+    """
+    Direct download endpoint for local files
+    
+    This endpoint is used when storage is local (development mode)
+    The file_path should be relative to the project root
+    """
+    # Security check - ensure file_path is within allowed directories
+    allowed_prefixes = ["uploads/", "parquet/"]
+    if not any(file_path.startswith(prefix) for prefix in allowed_prefixes):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access to this file path is not allowed"
+        )
+    
+    # Check if file exists
+    if not os.path.exists(file_path):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="File not found"
+        )
+    
+    # Determine filename and media type
+    filename = os.path.basename(file_path)
+    
+    if file_path.endswith('.csv'):
+        media_type = 'text/csv'
+    elif file_path.endswith('.parquet'):
+        media_type = 'application/octet-stream'
+    else:
+        media_type = 'application/octet-stream'
+    
+    return FileResponse(
+        path=file_path,
+        filename=filename,
+        media_type=media_type,
+        headers={
+            "Content-Disposition": f"attachment; filename={filename}",
+            "Cache-Control": "no-cache"
+        }
+    )
 
 @router.delete("/files/{file_id}")
 async def delete_file(
