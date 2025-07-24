@@ -12,7 +12,7 @@ class AuthManager:
         # Use environment variable for secret key in production, fallback to generated one
         self.secret_key = os.getenv("JWT_SECRET_KEY", self._generate_secret_key())
         self.algorithm = "HS256"
-        self.access_token_expire_minutes = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "30"))
+        self.access_token_expire_minutes = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "10080"))  # 7 days default
         self.pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
         
         # Fixed credentials for this test assignment

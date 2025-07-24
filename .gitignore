@@ -29,6 +29,10 @@ MANIFEST
 # PyInstaller
 *.manifest
 *.spec
+# Don't commit or push any code under the docs directory
+/docs/
+
+/docs/*
 
 # Installer logs
 pip-log.txt

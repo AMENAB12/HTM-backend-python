@@ -101,6 +101,110 @@
 **Response (200):** Single file object
 **Error (404):** `{"detail": "File not found"}`
 
+### GET `/files/{file_id}/data`
+
+**Description:** Get file data content with pagination  
+**Auth Required:** ✅
+
+**Query Parameters:**
+
+- `limit` (int): Number of rows to return (default: 100)
+- `offset` (int): Number of rows to skip (default: 0)
+- `format` (string): Data format 'csv' or 'parquet' (default: 'parquet')
+
+**Response (200):**
+
+```json
+{
+  "file_id": 1,
+  "filename": "data.csv",
+  "format": "parquet",
+  "total_rows": 1500,
+  "returned_rows": 100,
+  "offset": 0,
+  "limit": 100,
+  "columns": ["id", "name", "email", "department"],
+  "data": [
+    {
+      "id": 1,
+      "name": "John",
+      "email": "john@company.com",
+      "department": "Engineering"
+    }
+  ]
+}
+```
+
+### GET `/files/{file_id}/statistics`
+
+**Description:** Get comprehensive file statistics and data analysis  
+**Auth Required:** ✅
+
+**Response (200):**
+
+```json
+{
+  "file_info": {
+    "id": 1,
+    "filename": "employees.csv",
+    "total_rows": 1500,
+    "total_columns": 5
+  },
+  "columns": [
+    {
+      "name": "salary",
+      "data_type": "int64",
+      "missing_count": 2,
+      "missing_percentage": 0.13,
+      "unique_count": 847,
+      "min_value": 35000,
+      "max_value": 150000,
+      "mean_value": 72450.5
+    }
+  ],
+  "data_quality": {
+    "total_missing_values": 15,
+    "missing_percentage": 0.2,
+    "duplicate_rows": 3
+  },
+  "file_sizes": {
+    "csv_size_bytes": 125000,
+    "parquet_size_bytes": 45000,
+    "compression_ratio": 2.78,
+    "space_saved_percentage": 64.0
+  }
+}
+```
+
+### GET `/files/{file_id}/preview`
+
+**Description:** Get quick data preview comparing CSV and Parquet formats  
+**Auth Required:** ✅
+
+**Query Parameters:**
+
+- `rows` (int): Number of preview rows (default: 10)
+
+**Response (200):**
+
+```json
+{
+  "file_id": 1,
+  "filename": "employees.csv",
+  "status": "Done",
+  "csv_preview": {
+    "columns": ["id", "name", "email"],
+    "data": [...],
+    "rows_returned": 10
+  },
+  "parquet_preview": {
+    "columns": ["id", "name", "email"],
+    "data": [...],
+    "rows_returned": 10
+  }
+}
+```
+
 ### DELETE `/files/{file_id}`
 
 **Description:** Delete file and metadata  
