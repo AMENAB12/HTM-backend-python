@@ -1,0 +1,55 @@
+services:
+  # Web Service (FastAPI Backend)
+  - type: web
+    name: csv-converter-api
+    env: python
+    region: oregon
+    plan: starter
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app.main:app -w 4 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:$PORT
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: DEBUG
+        value: false
+      - key: HOST
+        value: 0.0.0.0
+      - key: RELOAD
+        value: false
+      - key: USE_CLOUD_STORAGE
+        value: true
+      - key: JWT_SECRET_KEY
+        generateValue: true
+      - key: JWT_ALGORITHM
+        value: HS256
+      - key: ACCESS_TOKEN_EXPIRE_MINUTES
+        value: 10080
+      - key: CORS_ORIGINS
+        value: https://your-frontend-domain.com
+      # Neon PostgreSQL Database (set manually in Render dashboard)
+      - key: DATABASE_URL
+        value: postgresql://neondb_owner:npg_IO2PHryK6lBo@ep-nameless-art-aeo7798p-pooler.c-2.us-east-2.aws.neon.tech/neondb?sslmode=require
+      # R2 Storage Configuration (set these in Render dashboard)
+      - key: R2_ENDPOINT_URL
+        value: https://your-account-id.r2.cloudflarestorage.com
+      - key: R2_ACCESS_KEY_ID
+        sync: false # Set manually in dashboard
+      - key: R2_SECRET_ACCESS_KEY
+        sync: false # Set manually in dashboard
+      - key: R2_BUCKET_NAME
+        value: csv-converter-storage
+      - key: R2_REGION
+        value: auto
+
+  # Using Neon PostgreSQL (external service)
+  # No additional database service needed
+# Optional: Background Worker Service (if needed for async processing)
+# - type: worker
+#   name: csv-converter-worker
+#   env: python
+#   region: oregon
+#   plan: starter
+#   buildCommand: pip install -r requirements.txt
+#   startCommand: python -m app.worker
+#   envVars:
+#     # Same environment variables as web service

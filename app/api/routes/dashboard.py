@@ -7,11 +7,18 @@ from pathlib import Path
 
 from ..dependencies import get_current_user
 from ...core.database import DatabaseManager
+from ...core.database_postgres import ProductionDatabaseManager
+from ...core.storage import storage_service
+from ...core.config import get_settings
 
 router = APIRouter(tags=["Dashboard"])
 
-# Initialize database manager
-db_manager = DatabaseManager()
+# Initialize database manager (production-ready)
+settings = get_settings()
+if settings.environment == "production" or settings.is_production:
+    db_manager = ProductionDatabaseManager()
+else:
+    db_manager = DatabaseManager()
 
 @router.get("/dashboard/overview")
 async def get_dashboard_overview(current_user: dict = Depends(get_current_user)):

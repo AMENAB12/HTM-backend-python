@@ -1,11 +1,22 @@
 fastapi==0.104.1
-uvicorn==0.24.0
-python-multipart==0.0.6
-pandas==2.1.4
-pyarrow==14.0.2
-sqlalchemy==2.0.23
+uvicorn[standard]==0.24.0
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
+python-multipart==0.0.6
+pandas==2.1.3
+pyarrow==14.0.1
 aiofiles==24.1.0
-pydantic==2.5.0
-pydantic-settings==2.0.3 
+pydantic-settings==2.10.1
+
+# Production Database
+psycopg2-binary==2.9.7
+asyncpg==0.29.0
+sqlalchemy==2.0.23
+
+# Cloud Storage (R2/S3)
+boto3==1.34.0
+aioboto3==12.0.0
+
+# Production Extras
+gunicorn==21.2.0
+python-dotenv==1.0.0 

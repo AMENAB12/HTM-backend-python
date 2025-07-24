@@ -10,6 +10,9 @@ import json
 
 from ..dependencies import get_current_user
 from ...core.database import DatabaseManager
+from ...core.database_postgres import ProductionDatabaseManager
+from ...core.storage import storage_service
+from ...core.config import get_settings
 from ...models.file_metadata import FileMetadata
 
 def sanitize_for_json(obj: Any) -> Any:
@@ -113,7 +116,15 @@ def read_csv_robust(file_path: str) -> pd.DataFrame:
 router = APIRouter(tags=["File Operations"])
 
 # Initialize managers
-db_manager = DatabaseManager()
+# Initialize database manager (production-ready)
+settings = get_settings()
+if settings.environment == "production" or settings.is_production:
+    db_manager = ProductionDatabaseManager()
+else:
+    db_manager = DatabaseManager()
+
+# Storage service (works with both local and R2 storage)
+storage = storage_service
 
 # Ensure directories exist
 os.makedirs("uploads", exist_ok=True)
@@ -148,14 +159,25 @@ async def upload_file(
         )
     
     try:
-        # Save uploaded file
-        upload_path = f"uploads/{file.filename}"
-        async with aiofiles.open(upload_path, 'wb') as f:
-            content = await file.read()
-            await f.write(content)
+        # Read file content
+        content = await file.read()
+        
+        # Save uploaded file to storage (local or R2)
+        upload_path = await storage.save_file(content, file.filename, "csv")
         
         # Read CSV and validate (with robust error handling)
-        df = read_csv_robust(upload_path)
+        if settings.should_use_cloud_storage:
+            # For R2 storage, read from cloud and create temp file for processing
+            csv_content = await storage.read_file(upload_path)
+            temp_path = f"temp_{file.filename}"
+            async with aiofiles.open(temp_path, 'wb') as f:
+                await f.write(csv_content)
+            df = read_csv_robust(temp_path)
+            os.remove(temp_path)  # Clean up temp file
+        else:
+            # For local storage, read directly
+            df = read_csv_robust(upload_path)
+        
         row_count = len(df)
         
         # Determine status based on row count
@@ -166,8 +188,15 @@ async def upload_file(
             status_value = "Processing"
             # Convert to Parquet
             parquet_filename = file.filename.replace('.csv', '.parquet')
-            parquet_path = f"parquet/{parquet_filename}"
-            df.to_parquet(parquet_path, index=False)
+            
+            # Create parquet file
+            import io
+            parquet_buffer = io.BytesIO()
+            df.to_parquet(parquet_buffer, index=False)
+            parquet_content = parquet_buffer.getvalue()
+            
+            # Save parquet to storage (local or R2)
+            parquet_path = await storage.save_file(parquet_content, parquet_filename, "parquet")
             
     except pd.errors.EmptyDataError:
         status_value = "Error"
@@ -197,7 +226,13 @@ async def upload_file(
         "upload_timestamp": metadata.upload_timestamp.isoformat(),
         "row_count": row_count,
         "status": status_value,
-        "parquet_path": parquet_path
+        "parquet_path": parquet_path,
+        "storage_type": "cloud" if settings.should_use_cloud_storage else "local",
+        "storage_info": {
+            "csv_path": upload_path,
+            "parquet_path": parquet_path,
+            "storage_backend": "r2" if settings.should_use_cloud_storage else "local_filesystem"
+        }
     }
     
     # Simulate processing delay for files with rows > 0
@@ -287,23 +322,68 @@ async def get_file_data(
     
     try:
         if format.lower() == "csv":
-            # Return original CSV data
-            csv_path = f"uploads/{file_metadata.filename}"
-            if not os.path.exists(csv_path):
+            # Try to find CSV file in multiple locations
+            csv_found = False
+            df = None
+            
+            # Try R2 location first
+            if settings.should_use_cloud_storage:
+                r2_csv_path = f"csv/{file_metadata.filename}"
+                if storage.file_exists(r2_csv_path):
+                    csv_content = await storage.read_file(r2_csv_path)
+                    temp_path = f"temp_read_{file_metadata.filename}"
+                    async with aiofiles.open(temp_path, 'wb') as f:
+                        await f.write(csv_content)
+                    df = read_csv_robust(temp_path)
+                    os.remove(temp_path)
+                    csv_found = True
+            
+            # Try local location if not found in R2
+            if not csv_found:
+                local_csv_path = f"uploads/{file_metadata.filename}"
+                if os.path.exists(local_csv_path):
+                    df = read_csv_robust(local_csv_path)
+                    csv_found = True
+            
+            if not csv_found:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
-                    detail="Original CSV file not found"
+                    detail=f"CSV file '{file_metadata.filename}' not found in any storage location"
                 )
-            # Read CSV with robust error handling
-            df = read_csv_robust(csv_path)
+                
         else:
-            # Return Parquet data
-            if not file_metadata.parquet_path or not os.path.exists(file_metadata.parquet_path):
+            # Try to find Parquet file in multiple locations
+            parquet_found = False
+            df = None
+            
+            if not file_metadata.parquet_path:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
-                    detail="Parquet file not found"
+                    detail="No parquet file path recorded for this file"
                 )
-            df = pd.read_parquet(file_metadata.parquet_path)
+            
+            # Try R2 location first (if parquet_path looks like R2 path)
+            if settings.should_use_cloud_storage and file_metadata.parquet_path.startswith("parquet/"):
+                r2_parquet_path = file_metadata.parquet_path
+                if storage.file_exists(r2_parquet_path):
+                    parquet_content = await storage.read_file(r2_parquet_path)
+                    temp_path = f"temp_read_{file_metadata.filename.replace('.csv', '.parquet')}"
+                    async with aiofiles.open(temp_path, 'wb') as f:
+                        await f.write(parquet_content)
+                    df = pd.read_parquet(temp_path)
+                    os.remove(temp_path)
+                    parquet_found = True
+            
+            # Try local location if not found in R2
+            if not parquet_found and os.path.exists(file_metadata.parquet_path):
+                df = pd.read_parquet(file_metadata.parquet_path)
+                parquet_found = True
+            
+            if not parquet_found:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Parquet file not found at '{file_metadata.parquet_path}' in any storage location"
+                )
         
         # Apply pagination
         total_rows = len(df)
@@ -358,18 +438,48 @@ async def get_file_statistics(
         )
     
     try:
-        csv_path = f"uploads/{file_metadata.filename}"
-        parquet_path = file_metadata.parquet_path
+        # Find parquet file in multiple locations
+        parquet_df = None
+        parquet_size_bytes = 0
         
-        # Read both files for comparison
-        csv_df = read_csv_robust(csv_path) if os.path.exists(csv_path) else None
-        parquet_df = pd.read_parquet(parquet_path) if os.path.exists(parquet_path) else None
+        if file_metadata.parquet_path:
+            # Try R2 location first
+            if settings.should_use_cloud_storage and file_metadata.parquet_path.startswith("parquet/"):
+                if storage.file_exists(file_metadata.parquet_path):
+                    try:
+                        parquet_content = await storage.read_file(file_metadata.parquet_path)
+                        temp_path = f"temp_stats_{file_metadata.filename.replace('.csv', '.parquet')}"
+                        async with aiofiles.open(temp_path, 'wb') as f:
+                            await f.write(parquet_content)
+                        parquet_df = pd.read_parquet(temp_path)
+                        parquet_size_bytes = len(parquet_content)
+                        os.remove(temp_path)
+                    except Exception:
+                        pass
+            
+            # Try local location if not found in R2
+            if parquet_df is None and os.path.exists(file_metadata.parquet_path):
+                parquet_df = pd.read_parquet(file_metadata.parquet_path)
+                parquet_size_bytes = os.path.getsize(file_metadata.parquet_path)
         
         if parquet_df is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="Processed file not found"
+                detail=f"Parquet file not found for '{file_metadata.filename}'"
             )
+        
+        # Find CSV file for size comparison
+        csv_size_bytes = 0
+        if settings.should_use_cloud_storage:
+            csv_r2_path = f"csv/{file_metadata.filename}"
+            if storage.file_exists(csv_r2_path):
+                csv_size_bytes = storage.get_file_size(csv_r2_path)
+        
+        # Try local CSV if not found in R2
+        if csv_size_bytes == 0:
+            local_csv_path = f"uploads/{file_metadata.filename}"
+            if os.path.exists(local_csv_path):
+                csv_size_bytes = os.path.getsize(local_csv_path)
         
         # Calculate statistics
         stats = {
@@ -389,8 +499,8 @@ async def get_file_statistics(
                 "unique_rows": len(parquet_df.drop_duplicates())
             },
             "file_sizes": {
-                "csv_size_bytes": os.path.getsize(csv_path) if csv_path and os.path.exists(csv_path) else 0,
-                "parquet_size_bytes": os.path.getsize(parquet_path) if os.path.exists(parquet_path) else 0
+                "csv_size_bytes": csv_size_bytes,
+                "parquet_size_bytes": parquet_size_bytes
             }
         }
         
@@ -476,9 +586,6 @@ async def get_file_preview(
         )
     
     try:
-        csv_path = f"uploads/{file_metadata.filename}"
-        parquet_path = file_metadata.parquet_path
-        
         preview_data = {
             "file_id": file_id,
             "filename": file_metadata.filename,
@@ -486,25 +593,73 @@ async def get_file_preview(
             "rows_requested": rows
         }
         
-        # CSV preview
-        if os.path.exists(csv_path):
-            csv_df = read_csv_robust(csv_path).head(rows)
-            # Use robust JSON serialization
-            preview_data["csv_preview"] = {
-                "columns": csv_df.columns.tolist(),
-                "data": df_to_json_safe(csv_df),
-                "rows_returned": len(csv_df)
-            }
+        # CSV preview - try multiple locations
+        csv_found = False
         
-        # Parquet preview (if processed)
-        if file_metadata.status == "Done" and parquet_path and os.path.exists(parquet_path):
-            parquet_df = pd.read_parquet(parquet_path).head(rows)
-            # Use robust JSON serialization
-            preview_data["parquet_preview"] = {
-                "columns": parquet_df.columns.tolist(),
-                "data": df_to_json_safe(parquet_df),
-                "rows_returned": len(parquet_df)
-            }
+        # Try R2 location first
+        if settings.should_use_cloud_storage:
+            csv_r2_path = f"csv/{file_metadata.filename}"
+            if storage.file_exists(csv_r2_path):
+                try:
+                    csv_content = await storage.read_file(csv_r2_path)
+                    temp_path = f"temp_preview_csv_{file_metadata.filename}"
+                    async with aiofiles.open(temp_path, 'wb') as f:
+                        await f.write(csv_content)
+                    csv_df = read_csv_robust(temp_path).head(rows)
+                    preview_data["csv_preview"] = {
+                        "columns": csv_df.columns.tolist(),
+                        "data": df_to_json_safe(csv_df),
+                        "rows_returned": len(csv_df)
+                    }
+                    os.remove(temp_path)
+                    csv_found = True
+                except Exception:
+                    pass
+        
+        # Try local location if not found in R2
+        if not csv_found:
+            local_csv_path = f"uploads/{file_metadata.filename}"
+            if os.path.exists(local_csv_path):
+                csv_df = read_csv_robust(local_csv_path).head(rows)
+                preview_data["csv_preview"] = {
+                    "columns": csv_df.columns.tolist(),
+                    "data": df_to_json_safe(csv_df),
+                    "rows_returned": len(csv_df)
+                }
+                csv_found = True
+        
+        # Parquet preview - try multiple locations
+        if file_metadata.status == "Done" and file_metadata.parquet_path:
+            parquet_found = False
+            
+            # Try R2 location first
+            if settings.should_use_cloud_storage and file_metadata.parquet_path.startswith("parquet/"):
+                if storage.file_exists(file_metadata.parquet_path):
+                    try:
+                        parquet_content = await storage.read_file(file_metadata.parquet_path)
+                        temp_path = f"temp_preview_parquet_{file_metadata.filename.replace('.csv', '.parquet')}"
+                        async with aiofiles.open(temp_path, 'wb') as f:
+                            await f.write(parquet_content)
+                        parquet_df = pd.read_parquet(temp_path).head(rows)
+                        preview_data["parquet_preview"] = {
+                            "columns": parquet_df.columns.tolist(),
+                            "data": df_to_json_safe(parquet_df),
+                            "rows_returned": len(parquet_df)
+                        }
+                        os.remove(temp_path)
+                        parquet_found = True
+                    except Exception:
+                        pass
+            
+            # Try local location if not found in R2
+            if not parquet_found and os.path.exists(file_metadata.parquet_path):
+                parquet_df = pd.read_parquet(file_metadata.parquet_path).head(rows)
+                preview_data["parquet_preview"] = {
+                    "columns": parquet_df.columns.tolist(),
+                    "data": df_to_json_safe(parquet_df),
+                    "rows_returned": len(parquet_df)
+                }
+                parquet_found = True
         
         return preview_data
         

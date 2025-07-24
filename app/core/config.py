@@ -21,6 +21,22 @@ class Settings(BaseSettings):
     
     # Database Configuration
     database_path: str = "metadata.db"
+    environment: str = "development"
+    
+    # PostgreSQL Configuration (for production)
+    postgres_host: Optional[str] = None
+    postgres_port: int = 5432
+    postgres_db: Optional[str] = None
+    postgres_user: Optional[str] = None
+    postgres_password: Optional[str] = None
+    
+    # R2/S3 Storage Configuration
+    use_cloud_storage: bool = False
+    r2_endpoint_url: Optional[str] = None
+    r2_access_key_id: Optional[str] = None
+    r2_secret_access_key: Optional[str] = None
+    r2_bucket_name: Optional[str] = None
+    r2_region: str = "auto"
     
     # File Storage Configuration
     upload_dir: str = "uploads"
@@ -58,6 +74,38 @@ class Settings(BaseSettings):
         if isinstance(self.cors_origins, list):
             return self.cors_origins
         return [origin.strip() for origin in self.cors_origins.split(',') if origin.strip()]
+    
+    # Database URL (can be set directly for services like Neon)
+    database_url: Optional[str] = None
+    
+    @property
+    def computed_database_url(self) -> str:
+        """Get the appropriate database URL based on environment"""
+        # If DATABASE_URL is set directly (e.g., from Neon), use it
+        if self.database_url:
+            return self.database_url
+            
+        # Otherwise, construct from individual components
+        if self.environment == "production" and all([
+            self.postgres_host, self.postgres_db, self.postgres_user, self.postgres_password
+        ]):
+            return f"postgresql://{self.postgres_user}:{self.postgres_password}@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
+        
+        # Fallback to SQLite for development
+        return f"sqlite:///{self.database_path}"
+    
+    @property
+    def is_production(self) -> bool:
+        """Check if running in production"""
+        return self.environment == "production"
+    
+    @property
+    def should_use_cloud_storage(self) -> bool:
+        """Check if cloud storage should be used (works in any environment)"""
+        return self.use_cloud_storage and all([
+            self.r2_endpoint_url, self.r2_access_key_id, 
+            self.r2_secret_access_key, self.r2_bucket_name
+        ])
     
     class Config:
         env_file = ".env"
