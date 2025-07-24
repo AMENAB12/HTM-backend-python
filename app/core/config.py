@@ -31,7 +31,7 @@ class Settings(BaseSettings):
     # Authentication Configuration
     jwt_secret_key: Optional[str] = None
     jwt_algorithm: str = "HS256"
-    access_token_expire_minutes: int = 30
+    access_token_expire_minutes: int = 10080  # 7 days (7 * 24 * 60)
     
     # Processing Configuration
     processing_delay_seconds: int = 3

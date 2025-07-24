@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .core.config import get_settings
-from .api.routes import auth, files, health
+from .api.routes import auth, files, health, dashboard
 
 # Get settings instance
 config_settings = get_settings()
@@ -26,6 +26,7 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(files.router)
 app.include_router(health.router)
+app.include_router(dashboard.router)
 
 if __name__ == "__main__":
     import uvicorn
