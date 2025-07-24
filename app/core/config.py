@@ -53,7 +53,7 @@ class Settings(BaseSettings):
     processing_delay_seconds: int = 3
     
     # CORS Configuration
-    cors_origins: str = "http://localhost:3000,http://localhost:3001,https://htm-frontend.vercel.app"
+    cors_origins: str = "http://localhost:3000,http://localhost:3001,https://htm-frontend.vercel.app,https://htm-frontend-test.vercel.app"
     
     @field_validator('jwt_secret_key')
     @classmethod
