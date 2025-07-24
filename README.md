@@ -46,7 +46,7 @@ app/
 1. **Clone and navigate to the project:**
 
    ```bash
-   cd backend/python
+   cd HTM-backend-python
    ```
 
 2. **Install dependencies:**
